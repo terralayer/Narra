@@ -25,7 +25,6 @@ Requirements: Docker with the Compose plugin.
 ```bash
 git clone https://github.com/terralayer/Narra.git
 cd Narra
-git checkout feature/0.1.0-alpha
 cp .env.example .env
 docker compose up -d --build
 ```
