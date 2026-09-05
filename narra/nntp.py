@@ -33,11 +33,23 @@ def decode_subject(value: str) -> str:
         return value
 
 
-def scan_overview(config: ProviderConfig, group: str, start: int, end: int | None = None):
+def overview_bounds(server_first: int, server_last: int, start: int | None, limit: int) -> tuple[int, int]:
+    limit = max(1, int(limit))
+    first = int(server_first)
+    last = int(server_last)
+    if start is None:
+        high = last
+        low = max(first, high - limit + 1)
+        return low, high
+    low = max(first, int(start))
+    high = min(last, low + limit - 1)
+    return low, high
+
+
+def scan_overview(config: ProviderConfig, group: str, start: int | None, limit: int = 5000):
     with connect(config) as client:
         _response, _count, first, last, _name = client.group(group)
-        low = max(int(first), int(start))
-        high = min(int(last), int(end)) if end is not None else int(last)
+        low, high = overview_bounds(int(first), int(last), start, limit)
         if low > high:
             return [], int(last)
         _resp, rows = client.over((low, high))

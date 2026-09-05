@@ -56,7 +56,8 @@ def _edition_from_subject(db: Session, text: str) -> tuple[str, int | None]:
 
 
 def scan_group(db: Session, provider: NNTPProvider, group: UsenetGroup, limit: int = 5000) -> dict:
-    start = max(1, int(group.high_water or 0) + 1)
+    saved_high_water = int(group.high_water or 0)
+    start = saved_high_water + 1 if saved_high_water > 0 else None
     config = ProviderConfig(
         host=provider.host,
         port=provider.port,
@@ -64,11 +65,12 @@ def scan_group(db: Session, provider: NNTPProvider, group: UsenetGroup, limit: i
         password=provider.password,
         use_ssl=provider.use_ssl,
     )
-    rows, server_high = scan_overview(config, group.name, start, start + max(1, limit) - 1)
+    rows, server_high = scan_overview(config, group.name, start, limit)
     if not rows:
-        group.high_water = max(group.high_water or 0, server_high)
-        db.commit()
-        return {'articles': 0, 'releases': 0, 'accepted': 0, 'high_water': group.high_water}
+        if saved_high_water > 0:
+            group.high_water = max(saved_high_water, server_high)
+            db.commit()
+        return {'articles': 0, 'releases': 0, 'accepted': 0, 'high_water': group.high_water, 'server_high': server_high}
 
     article_records = [
         ArticleRecord(
