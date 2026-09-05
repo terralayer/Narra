@@ -46,6 +46,17 @@ def overview_bounds(server_first: int, server_last: int, start: int | None, limi
     return low, high
 
 
+def _overview_row(article_number: int, overview: dict) -> dict:
+    return {
+        'article_number': int(article_number),
+        'subject': decode_subject(overview.get('subject', '')),
+        'message_id': overview.get('message-id', '').strip('<>'),
+        'bytes': int(overview.get(':bytes', 0) or 0),
+        'from': overview.get('from', ''),
+        'date': overview.get('date', ''),
+    }
+
+
 def scan_overview(config: ProviderConfig, group: str, start: int | None, limit: int = 5000):
     with connect(config) as client:
         _response, _count, first, last, _name = client.group(group)
@@ -53,17 +64,29 @@ def scan_overview(config: ProviderConfig, group: str, start: int | None, limit: 
         if low > high:
             return [], int(last)
         _resp, rows = client.over((low, high))
+        return [_overview_row(article_number, overview) for article_number, overview in rows], int(last)
+
+
+def search_overview(config: ProviderConfig, group: str, query: str, limit: int = 50_000) -> list[dict]:
+    """Search a bounded recent header window without advancing group scan state."""
+    terms = [term.casefold() for term in query.split() if term.strip()]
+    if not terms:
+        return []
+    with connect(config) as client:
+        _response, _count, first, last, _name = client.group(group)
+        low, high = overview_bounds(int(first), int(last), None, limit)
+        if low > high:
+            return []
+        _resp, rows = client.over((low, high))
         results = []
         for article_number, overview in rows:
-            results.append({
-                'article_number': int(article_number),
-                'subject': decode_subject(overview.get('subject', '')),
-                'message_id': overview.get('message-id', '').strip('<>'),
-                'bytes': int(overview.get(':bytes', 0) or 0),
-                'from': overview.get('from', ''),
-                'date': overview.get('date', ''),
-            })
-        return results, int(last)
+            subject = decode_subject(overview.get('subject', ''))
+            folded = subject.casefold()
+            if all(term in folded for term in terms):
+                row = _overview_row(article_number, overview)
+                row['subject'] = subject
+                results.append(row)
+        return results
 
 
 def probe_yenc_filename(config: ProviderConfig, message_id: str) -> str | None:
