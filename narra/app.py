@@ -1,10 +1,9 @@
 from html import escape
-from urllib.parse import quote
 from xml.etree.ElementTree import Element, SubElement, tostring
 
 from fastapi import Depends, FastAPI, Form, HTTPException, Query
 from fastapi.responses import HTMLResponse, Response
-from sqlalchemy import func, or_, select
+from sqlalchemy import func, select
 from sqlalchemy.orm import Session
 
 from . import __version__
@@ -13,6 +12,7 @@ from .db import Base, engine, get_db
 from .models import ApiKey, NNTPProvider, Release, UsenetArticle, UsenetGroup
 from .nzb import build_nzb
 from .scanner import scan_group
+from .search import search_releases
 
 app = FastAPI(title="Narra", version=__version__)
 
@@ -64,10 +64,7 @@ def dashboard(db: Session = Depends(get_db)):
 
 @app.get("/search", response_class=HTMLResponse)
 def search_ui(q: str = "", db: Session = Depends(get_db)):
-    stmt = select(Release).where(Release.accepted.is_(True)).order_by(Release.id.desc()).limit(100)
-    if q:
-        stmt = stmt.where(Release.title.ilike(f"%{q}%"))
-    results = db.scalars(stmt).all()
+    results = search_releases(db, q, accepted_only=True, limit=100)
     rows = ''.join(f"<tr><td><a href='/release/{r.id}'>{escape(r.title)}</a></td><td>{escape(r.group_name)}</td><td>{r.size_bytes}</td><td>{r.completion:.0%}</td></tr>" for r in results)
     if not rows:
         rows = "<tr><td colspan='4' class='muted'>No matching audiobooks.</td></tr>"
@@ -163,7 +160,5 @@ def newznab_api(t: str = Query("search"), q: str = Query(""), apikey: str | None
     if not valid_api_key(db, apikey):
         root = Element('error', {'code': '100', 'description': 'Incorrect user credentials'})
         return Response(tostring(root, encoding='utf-8'), status_code=401, media_type='application/xml')
-    stmt = select(Release).where(Release.accepted.is_(True)).order_by(Release.id.desc()).limit(100)
-    if q:
-        stmt = stmt.where(Release.title.ilike(f'%{q}%'))
-    return Response(newznab_xml(db.scalars(stmt).all()), media_type='application/xml')
+    releases = search_releases(db, q, accepted_only=True, limit=100)
+    return Response(newznab_xml(releases), media_type='application/xml')
