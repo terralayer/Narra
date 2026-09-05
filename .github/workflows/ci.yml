@@ -1,0 +1,42 @@
+name: ci
+
+on:
+  push:
+    branches: [main, 'feature/**']
+  pull_request:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-python@v5
+        with:
+          python-version: '3.12'
+      - run: python -m pip install --upgrade pip
+      - run: pip install -e '.[test]'
+      - run: pytest
+      - name: Verify migrations
+        env:
+          NARRA_DATABASE_URL: sqlite:///./migration-test.db
+        run: alembic upgrade head
+
+  container-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build and start Narra
+        run: docker compose up -d --build
+      - name: Wait for HTTP startup
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8787/ >/dev/null; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs
+          exit 1
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v

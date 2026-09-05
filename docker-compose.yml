@@ -1,0 +1,29 @@
+services:
+  db:
+    image: postgres:16-alpine
+    environment:
+      POSTGRES_DB: narra
+      POSTGRES_USER: narra
+      POSTGRES_PASSWORD: narra
+    volumes:
+      - narra-db:/var/lib/postgresql/data
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U narra -d narra"]
+      interval: 5s
+      timeout: 5s
+      retries: 20
+
+  narra:
+    build: .
+    ports:
+      - "8787:8000"
+    environment:
+      NARRA_DATABASE_URL: postgresql+psycopg://narra:narra@db:5432/narra
+      NARRA_API_KEY: ${NARRA_API_KEY:-narra-dev-key}
+    depends_on:
+      db:
+        condition: service_healthy
+    restart: unless-stopped
+
+volumes:
+  narra-db:
