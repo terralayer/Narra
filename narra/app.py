@@ -14,6 +14,7 @@ from .nzb import build_nzb
 from .scanner import scan_group
 from .search import search_releases
 from .seed import seed_default_groups
+from .targeted import targeted_search
 
 app = FastAPI(title="Narra", version=__version__)
 
@@ -49,6 +50,14 @@ def valid_api_key(db: Session, supplied: str | None) -> bool:
     return db.scalar(select(ApiKey.id).where(ApiKey.key == supplied, ApiKey.enabled.is_(True))) is not None
 
 
+def search_with_on_demand(db: Session, q: str, limit: int = 100):
+    results = search_releases(db, q, accepted_only=True, limit=limit)
+    if q.strip() and not results:
+        targeted_search(db, q)
+        results = search_releases(db, q, accepted_only=True, limit=limit)
+    return results
+
+
 @app.get("/", response_class=HTMLResponse)
 def dashboard(db: Session = Depends(get_db)):
     releases = db.scalar(select(func.count(Release.id))) or 0
@@ -67,11 +76,11 @@ def dashboard(db: Session = Depends(get_db)):
 
 @app.get("/search", response_class=HTMLResponse)
 def search_ui(q: str = "", db: Session = Depends(get_db)):
-    results = search_releases(db, q, accepted_only=True, limit=100)
+    results = search_with_on_demand(db, q, limit=100)
     rows = ''.join(f"<tr><td><a href='/release/{r.id}'>{escape(r.title)}</a></td><td>{escape(r.group_name)}</td><td>{r.size_bytes}</td><td>{r.completion:.0%}</td></tr>" for r in results)
     if not rows:
-        rows = "<tr><td colspan='4' class='muted'>No matching audiobooks.</td></tr>"
-    return page("Search", f"<div class='card'><h1>Audiobook search</h1><form><input name='q' value='{escape(q)}' placeholder='Title, author, narrator, series, ISBN or ASIN' style='width:min(650px,70vw)'><button>Search</button></form></div><div class='card'><table><tr><th>Title</th><th>Group</th><th>Bytes</th><th>Complete</th></tr>{rows}</table></div>")
+        rows = "<tr><td colspan='4' class='muted'>No matching audiobooks found in Narra or the searched Usenet header window.</td></tr>"
+    return page("Search", f"<div class='card'><h1>Audiobook search</h1><p class='muted'>If Narra has no cached match, this searches enabled audiobook groups on demand and caches matching releases.</p><form><input name='q' value='{escape(q)}' placeholder='Title, author, narrator, series, ISBN or ASIN' style='width:min(650px,70vw)'><button>Search Usenet</button></form></div><div class='card'><table><tr><th>Title</th><th>Group</th><th>Bytes</th><th>Complete</th></tr>{rows}</table></div>")
 
 
 @app.get("/release/{release_id}", response_class=HTMLResponse)
@@ -93,6 +102,7 @@ def settings_ui(db: Session = Depends(get_db)):
     return page("Settings", f"""
 <div class='card'><h2>Add NNTP provider</h2><form method='post' action='/providers'><input name='name' placeholder='Name' required> <input name='host' placeholder='news.example.com' required> <input name='port' type='number' value='563'> <input name='username' placeholder='Username'> <input name='password' type='password' placeholder='Password'> <button>Add provider</button></form><table><tr><th>Name</th><th>Server</th><th>Transport</th><th>Connections</th></tr>{p_rows}</table></div>
 <div class='card'><h2>Add Usenet group</h2><form method='post' action='/groups'><input name='name' placeholder='alt.binaries.audiobooks' required style='width:340px'> <button>Add group</button></form><table><tr><th>Group</th><th>High-water</th><th>Action</th></tr>{g_rows}</table></div>
+<div class='card'><h2>Search behavior</h2><p>Narra searches enabled audiobook groups on demand when a query is not already cached. Full background scanning is not required.</p></div>
 <div class='card'><h2>Newznab</h2><p>Development API key: <code>{escape(settings.api_key)}</code></p><p>Endpoint: <code>/api?t=search&amp;q=book&amp;apikey=...</code></p></div>""")
 
 
@@ -163,5 +173,5 @@ def newznab_api(t: str = Query("search"), q: str = Query(""), apikey: str | None
     if not valid_api_key(db, apikey):
         root = Element('error', {'code': '100', 'description': 'Incorrect user credentials'})
         return Response(tostring(root, encoding='utf-8'), status_code=401, media_type='application/xml')
-    releases = search_releases(db, q, accepted_only=True, limit=100)
+    releases = search_with_on_demand(db, q, limit=100)
     return Response(newznab_xml(releases), media_type='application/xml')
