@@ -1,6 +1,7 @@
 from dataclasses import dataclass
 from email.header import decode_header, make_header
 import nntplib
+import re
 
 
 @dataclass(slots=True)
@@ -51,3 +52,15 @@ def scan_overview(config: ProviderConfig, group: str, start: int, end: int | Non
                 'date': overview.get('date', ''),
             })
         return results, int(last)
+
+
+def probe_yenc_filename(config: ProviderConfig, message_id: str) -> str | None:
+    """Read one article body and return the yEnc name without downloading the payload."""
+    with connect(config) as client:
+        _response, info = client.body(f'<{message_id.strip("<>")}>')
+        for raw_line in info.lines[:25]:
+            line = raw_line.decode('latin-1', 'replace') if isinstance(raw_line, bytes) else str(raw_line)
+            if line.startswith('=ybegin'):
+                match = re.search(r'\bname=(.+)$', line)
+                return match.group(1).strip() if match else None
+    return None
