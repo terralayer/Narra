@@ -8,11 +8,12 @@ from sqlalchemy.orm import Session
 
 from . import __version__
 from .config import settings
-from .db import Base, engine, get_db
+from .db import Base, SessionLocal, engine, get_db
 from .models import ApiKey, NNTPProvider, Release, UsenetArticle, UsenetGroup
 from .nzb import build_nzb
 from .scanner import scan_group
 from .search import search_releases
+from .seed import seed_default_groups
 
 app = FastAPI(title="Narra", version=__version__)
 
@@ -20,6 +21,8 @@ app = FastAPI(title="Narra", version=__version__)
 @app.on_event("startup")
 def startup() -> None:
     Base.metadata.create_all(bind=engine)
+    with SessionLocal() as db:
+        seed_default_groups(db)
 
 
 def page(title: str, body: str) -> HTMLResponse:
