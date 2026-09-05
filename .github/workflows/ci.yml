@@ -2,7 +2,7 @@ name: ci
 
 on:
   push:
-    branches: [main, 'feature/**']
+    branches: [main, 'feature/**', 'fix/**']
   pull_request:
 
 jobs:
@@ -37,6 +37,48 @@ jobs:
           done
           docker compose logs
           exit 1
+      - name: Verify PostgreSQL search support
+        run: |
+          test "$(docker compose exec -T db psql -U narra -d narra -tAc "SELECT extname FROM pg_extension WHERE extname='pg_trgm'")" = "pg_trgm"
+          docker compose exec -T db psql -U narra -d narra -c "INSERT INTO releases (subject,title,group_name,size_bytes,completion,classification_score,accepted,reasons,created_at) VALUES ('Silo audiobook','Silo','alt.binaries.audiobooks',1,1.0,90,true,'test',NOW())"
+          curl --fail --silent 'http://127.0.0.1:8787/search?q=silo' | grep -q 'Silo'
+      - name: Stop stack
+        if: always()
+        run: docker compose down -v
+
+  legacy-upgrade-smoke:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - name: Build Narra and start PostgreSQL
+        run: |
+          docker compose build narra
+          docker compose up -d db
+          for i in {1..30}; do
+            if docker compose exec -T db pg_isready -U narra -d narra >/dev/null 2>&1; then
+              exit 0
+            fi
+            sleep 2
+          done
+          docker compose logs db
+          exit 1
+      - name: Create pre-migration Narra database
+        run: docker compose run --rm --entrypoint python narra -c "from narra.db import Base, engine; import narra.models; Base.metadata.create_all(engine)"
+      - name: Start upgraded Narra
+        run: docker compose up -d narra
+      - name: Verify legacy database is upgraded
+        run: |
+          for i in {1..30}; do
+            if curl --fail --silent http://127.0.0.1:8787/ >/dev/null; then
+              break
+            fi
+            sleep 2
+          done
+          curl --fail --silent http://127.0.0.1:8787/ >/dev/null
+          test "$(docker compose exec -T db psql -U narra -d narra -tAc "SELECT version_num FROM alembic_version")" = "0002"
+          test "$(docker compose exec -T db psql -U narra -d narra -tAc "SELECT extname FROM pg_extension WHERE extname='pg_trgm'")" = "pg_trgm"
+          docker compose exec -T db psql -U narra -d narra -c "INSERT INTO releases (subject,title,group_name,size_bytes,completion,classification_score,accepted,reasons,created_at) VALUES ('Silo audiobook','Silo','alt.binaries.audiobooks',1,1.0,90,true,'test',NOW())"
+          curl --fail --silent 'http://127.0.0.1:8787/search?q=silo' | grep -q 'Silo'
       - name: Stop stack
         if: always()
         run: docker compose down -v
