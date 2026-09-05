@@ -1,0 +1,53 @@
+from dataclasses import dataclass
+from email.header import decode_header, make_header
+import nntplib
+
+
+@dataclass(slots=True)
+class ProviderConfig:
+    host: str
+    port: int = 563
+    username: str | None = None
+    password: str | None = None
+    use_ssl: bool = True
+    timeout: int = 30
+
+
+def connect(config: ProviderConfig):
+    cls = nntplib.NNTP_SSL if config.use_ssl else nntplib.NNTP
+    return cls(
+        config.host,
+        port=config.port,
+        user=config.username,
+        password=config.password,
+        readermode=True,
+        timeout=config.timeout,
+    )
+
+
+def decode_subject(value: str) -> str:
+    try:
+        return str(make_header(decode_header(value)))
+    except Exception:
+        return value
+
+
+def scan_overview(config: ProviderConfig, group: str, start: int, end: int | None = None):
+    with connect(config) as client:
+        _response, _count, first, last, _name = client.group(group)
+        low = max(int(first), int(start))
+        high = min(int(last), int(end)) if end is not None else int(last)
+        if low > high:
+            return [], int(last)
+        _resp, rows = client.over((low, high))
+        results = []
+        for article_number, overview in rows:
+            results.append({
+                'article_number': int(article_number),
+                'subject': decode_subject(overview.get('subject', '')),
+                'message_id': overview.get('message-id', '').strip('<>'),
+                'bytes': int(overview.get(':bytes', 0) or 0),
+                'from': overview.get('from', ''),
+                'date': overview.get('date', ''),
+            })
+        return results, int(last)
